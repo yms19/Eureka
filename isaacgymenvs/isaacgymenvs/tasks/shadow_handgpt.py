@@ -367,7 +367,7 @@ class ShadowHandGPT(VecTask):
         self.goal_object_indices = to_torch(self.goal_object_indices, dtype=torch.long, device=self.device)
 
     def compute_reward(self, actions):
-        self.rew_buf[:], self.rew_dict = compute_reward(self.object_rot, self.goal_rot, self.fingertip_pos, self.object_pos)
+        self.rew_buf[:], self.rew_dict = compute_reward(self.object_rot, self.goal_rot)
         self.extras['gpt_reward'] = self.rew_buf.mean()
         for rew_state in self.rew_dict: self.extras[rew_state] = self.rew_dict[rew_state].mean()
         self.rew_buf[:] = compute_bonus(
@@ -763,32 +763,29 @@ import math
 import torch
 from torch import Tensor
 @torch.jit.script
-def compute_reward(object_rot: torch.Tensor, goal_rot: torch.Tensor, fingertip_pos: torch.Tensor, object_pos: torch.Tensor) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
-    device = object_rot.device
+def compute_reward(object_rot: torch.Tensor, goal_rot: torch.Tensor) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
     
-    # Distance between object rotation and goal rotation
-    object_goal_rot_diff = torch.norm(object_rot - goal_rot, dim=1)
+    # Compute the relative rotation between the object and the goal orientation
+    relative_rot_tensor = torch.mul(object_rot, torch.conj(goal_rot))
     
-    # Distance between each fingertip and the object
-    fingertip_object_diff = torch.norm(fingertip_pos - object_pos.unsqueeze(1), dim=2)
-    avg_fingertip_object_diff = fingertip_object_diff.mean(dim=1)
+    # Calculate the angular distance as the reward
+    angular_distance = 2 * torch.acos(torch.abs(relative_rot_tensor[..., 0]).clamp(0, 1))
     
-    # Reward Components
-    rot_reward = -object_goal_rot_diff
-    fingertip_reward = -avg_fingertip_object_diff
+    # Normalize the angular distance by applying a temperature parameter
+    temperature_angular_distance = torch.tensor(1.5, device=object_rot.device) # Change the temperature value
+    normalized_angular_distance = torch.exp(-temperature_angular_distance * angular_distance)
+
+    # Introduce rotation axis alignment reward
+    rotation_axis_alignment = torch.abs(torch.sum(object_rot[..., 1:] * goal_rot[..., 1:], dim=-1)).clamp(0, 1)
+    temperature_alignment = torch.tensor(1.0, device=object_rot.device)
+    normalized_axis_alignment = torch.exp(temperature_alignment * rotation_axis_alignment)
+
+    # Calculate the total reward using a weighted sum of normalized components
+    weight_angular_distance = 0.8
+    weight_axis_alignment = 0.2
+    reward = weight_angular_distance * normalized_angular_distance + weight_axis_alignment * normalized_axis_alignment
     
-    # Temperature parameters for reward normalization
-    rot_temperature = torch.tensor(1.0).to(device)
-    fingertip_temperature = torch.tensor(1.0).to(device)
+    # Store the individual reward components
+    reward_dict = {"angular_distance": -angular_distance, "rotation_axis_alignment": rotation_axis_alignment}
     
-    # Normalize reward components using exponential function
-    rot_reward_normalized = torch.exp(rot_reward / rot_temperature)
-    fingertip_reward_normalized = torch.exp(fingertip_reward / fingertip_temperature)
-    
-    # Combine normalized rewards
-    total_reward = rot_reward_normalized + fingertip_reward_normalized
-    
-    # Store individual reward components in a dictionary
-    reward_dict = {"rot_reward": rot_reward_normalized, "fingertip_reward": fingertip_reward_normalized}
-    
-    return total_reward, reward_dict
+    return reward, reward_dict

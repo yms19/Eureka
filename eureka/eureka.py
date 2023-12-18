@@ -60,7 +60,7 @@ def main(cfg):
 
     task_code_string = task_code_string.replace(task, task+suffix)
     # Create Task YAML files
-    create_task(ISAAC_ROOT_DIR, cfg.env.task, cfg.env.env_name, suffix)
+    create_task(ISAAC_ROOT_DIR, cfg.env.task, cfg.env.env_name, suffix) # 创建新的yaml文档，主要是改写任务名
 
     DUMMY_FAILURE = -10000.
     max_successes = []
@@ -83,6 +83,7 @@ def main(cfg):
 
         logging.info(f"Iteration {iter}: Generating {cfg.sample} samples with {cfg.model}")
 
+        # 进行一轮采样
         while True:
             if total_samples >= cfg.sample:
                 break
@@ -119,6 +120,7 @@ def main(cfg):
         
         code_runs = [] 
         rl_runs = []
+        # 对每个response做处理，包括将生成的reward写回环境，进行RL训练，将训练结果写回文件
         for response_id in range(cfg.sample):
             response_cur = responses[response_id]["message"]["content"]
             logging.info(f"Iteration {iter}: Processing Code Run {response_id}")
@@ -188,6 +190,7 @@ def main(cfg):
             
             # Execute the python file with flags
             rl_filepath = f"env_iter{iter}_response{response_id}.txt"
+            print("start training...")
             with open(rl_filepath, 'w') as f:
                 process = subprocess.Popen(['python', '-u', f'{ISAAC_ROOT_DIR}/train.py',  
                                             'hydra/output=subprocess',
